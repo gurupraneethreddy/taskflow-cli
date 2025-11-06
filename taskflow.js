@@ -208,7 +208,7 @@ cli.command('init').description('Initialize task storage').action(() => initData
 
 cli
   .command('add [json]')
-  .description('Add new task JSON. Use -file <path> or - for stdin input')
+  .description('Add new task JSON. Use --file <path> or - for stdin input')
   .option('-file <path>', 'Read task JSON from file')
   .action(async (jsonArg, opts) => {
     try {
@@ -222,7 +222,7 @@ cli
       } else if (jsonArg === '-' || jsonArg === undefined) {
         if (jsonArg === '-') payload = await readJsonFromStdin();
         else {
-          console.error('No JSON provided. Use -file <path> or pass JSON as argument or "-" to read from stdin.');
+          console.error('No JSON provided. Use --file <path> or pass JSON as argument or "-" to read from stdin.');
           process.exit(1);
         }
       } else {
