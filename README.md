@@ -1,3 +1,4 @@
+![TaskFlow Self-Check](https://github.com/gurupraneethreddy/taskflow-cli/actions/workflows/run-selfcheck.yml/badge.svg)
 # Quick start
 
 Open power shell
