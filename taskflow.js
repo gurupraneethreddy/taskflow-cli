@@ -1,24 +1,3 @@
-#!/usr/bin/env node
-/**
- * taskflow.js - CLI Task Queue Manager (full feature set)
- *
- * - multiple worker support (taskflow.js worker start --count N)
- * - worker stop (taskflow.js worker stop)
- * - config set/get (taskflow.js config set <k> <v> / config get <k>)
- * - persistent storage (taskdata.json)
- * - retry with exponential backoff
- * - dead-task list (failed tasks)
- * - selfcheck for CI
- *
- * Usage highlights:
- *  node taskflow.js init
- *  Get-Content -Raw .\task.json | node taskflow.js add -
- *  node taskflow.js worker start --count 3
- *  node taskflow.js worker stop
- *  node taskflow.js config set backoff_base 3
- *  node taskflow.js selfcheck
- */
-
 const { Command } = require('commander');
 const { v4: uuidv4 } = require('uuid');
 const fs = require('fs');
@@ -41,15 +20,11 @@ function readTextFileStripBOM(p) {
   return txt;
 }
 
-/* ---------- Data load/save & migration ---------- */
-
 function loadData() {
   try {
     if (!fs.existsSync(DATA_FILE)) return { tasks: [], config: DEFAULT_CONF };
     const text = readTextFileStripBOM(DATA_FILE);
     const raw = JSON.parse(text);
-
-    // migrate old 'jobs' -> 'tasks' if present
     if (isObject(raw) && Array.isArray(raw.jobs)) {
       const tasks = raw.jobs.map(j => ({
         id: j.id,
@@ -76,8 +51,6 @@ function loadData() {
       raw.config = raw.config && isObject(raw.config) ? raw.config : DEFAULT_CONF;
       return raw;
     }
-
-    // unknown shape -> warn and return empty dataset
     console.warn('Warning: data file has unexpected shape, using empty dataset (file preserved).');
     return { tasks: [], config: DEFAULT_CONF };
   } catch (e) {
@@ -92,8 +65,6 @@ function saveData(data) {
   fs.renameSync(tmp, DATA_FILE);
 }
 
-/* ---------- Workers file read/write ---------- */
-
 function saveWorkersMeta(meta) {
   const tmp = WORKERS_FILE + '.tmp';
   fs.writeFileSync(tmp, JSON.stringify(meta, null, 2), 'utf8');
@@ -107,8 +78,6 @@ function loadWorkersMeta() {
     return { workers: [] };
   }
 }
-
-/* ---------- Core operations ---------- */
 
 function initData() {
   if (!fs.existsSync(DATA_FILE)) {
@@ -182,9 +151,8 @@ function markFailed(id, attempts, maxRetries, code, err, base) {
   t.attempts = Number(attempts) + 1;
   t.last_error = String(err);
   t.exit_code = code;
-  // consider retries exhausted when attempts >= max_retries
   if (t.attempts >= t.max_retries) {
-    t.state = 'failed'; // dead-letter
+    t.state = 'failed';
     t.updated_at = timestamp();
   } else {
     const delay = Math.pow(Number(base || data.config.backoff_base || DEFAULT_CONF.backoff_base), t.attempts);
@@ -195,8 +163,6 @@ function markFailed(id, attempts, maxRetries, code, err, base) {
   saveData(data);
 }
 
-/* ---------- Command execution ---------- */
-
 function execCommand(cmd) {
   return new Promise((resolve, reject) => {
     const proc = spawn(cmd, { shell: true, stdio: 'inherit' });
@@ -205,10 +171,7 @@ function execCommand(cmd) {
   });
 }
 
-/* ---------- Worker loop (single worker) ---------- */
-
 async function workerLoopOnce(shutdownSignal) {
-  // run a single worker loop that is stoppable by checking shutdownSignal()
   while (!shutdownSignal()) {
     const task = claimTask();
     if (!task) {
@@ -234,8 +197,6 @@ async function workerLoopOnce(shutdownSignal) {
   }
 }
 
-/* ---------- Foreground manager to spawn multiple child workers ---------- */
-
 function spawnWorkers(count) {
   const procs = [];
   for (let i = 0; i < count; i++) {
@@ -248,7 +209,6 @@ function spawnWorkers(count) {
     console.log(`Started worker pid=${child.pid}`);
     procs.push(child);
   }
-  // persist metadata for stop
   const meta = { workers: procs.map(p => ({ pid: p.pid, started_at: timestamp() })) };
   saveWorkersMeta(meta);
   return procs;
@@ -268,11 +228,8 @@ function stopWorkersFromMeta() {
       console.error(`Could not signal pid ${w.pid}:`, e.message);
     }
   });
-  // remove file
-  try { fs.unlinkSync(WORKERS_FILE); } catch (e) { /* ignore */ }
+  try { fs.unlinkSync(WORKERS_FILE); } catch (e) {  }
 }
-
-/* ---------- Child worker entrypoint when --child passed ---------- */
 
 async function runAsChild() {
   console.log(`TaskFlow child worker started (pid=${process.pid})`);
@@ -281,8 +238,6 @@ async function runAsChild() {
   await workerLoopOnce(() => shuttingDown);
   console.log(`TaskFlow child worker exiting (pid=${process.pid})`);
 }
-
-/* ---------- Utility ---------- */
 
 function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
 
@@ -300,8 +255,6 @@ function readJsonFromStdin() {
     process.stdin.on('error', err => reject(err));
   });
 }
-
-/* ---------- CLI definitions ---------- */
 
 cli.name('taskflow').description('TaskFlow CLI - local task queue manager');
 
@@ -340,11 +293,6 @@ cli
     }
   });
 
-/* Worker management:
-   - `taskflow.js worker start --count N` : spawn N child workers in foreground
-   - `taskflow.js worker stop` : stop workers recorded in workers.json
-*/
-
 const workerCmd = cli.command('worker').description('Worker management');
 
 workerCmd
@@ -382,7 +330,6 @@ workerCmd
     stopWorkersFromMeta();
   });
 
-/* Support older single command 'taskflow.js worker' for convenience */
 cli
   .command('worker:foreground')
   .description('Run a single worker in foreground (legacy alias)')
@@ -393,7 +340,6 @@ cli
     workerLoopOnce(() => shutting).then(() => console.log('Worker stopped.'));
   });
 
-/* If invoked as child: --child */
 cli
   .option('--child', 'Run single worker loop as child process');
 
@@ -467,10 +413,7 @@ cli.command('selfcheck').description('Run lightweight selfcheck').action(() => {
   }
 });
 
-/* ---------- Main dispatch (handle child mode early, then commander) ---------- */
-
 (async () => {
-  // Early child-mode handling: run as a child worker and exit immediately
   if (process.argv.includes('--child') || process.env.TASKFLOW_CHILD === '1') {
     try {
       await runAsChild();
@@ -480,12 +423,7 @@ cli.command('selfcheck').description('Run lightweight selfcheck').action(() => {
       process.exit(1);
     }
   }
-
-  // Normal CLI flow
   cli.parse(process.argv);
-
-  // Backward compatibility: if user typed "node taskflow.js worker" (no subcommand),
-  // run one foreground worker loop (legacy behaviour).
   const invoked = process.argv.slice(2);
   if (invoked.length === 1 && invoked[0] === 'worker') {
     initData();
